@@ -4,7 +4,7 @@
   "description": "Foxglove Desktop panel embedding a Webots R2025a webots-view stream.",
   "publisher": "jkaflik",
   "homepage": "https://github.com/jkaflik/foxglove-webots-extension",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "license": "MIT",
   "repository": {
     "type": "git",
