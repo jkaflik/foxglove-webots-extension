@@ -1,0 +1,52 @@
+{
+  "name": "foxglove-webots-extension",
+  "displayName": "Webots",
+  "description": "Foxglove Desktop panel embedding a Webots R2025a webots-view stream.",
+  "publisher": "jkaflik",
+  "homepage": "https://github.com/jkaflik/foxglove-webots-extension",
+  "version": "0.1.0",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/jkaflik/foxglove-webots-extension.git"
+  },
+  "main": "./dist/extension.js",
+  "files": [
+    "CHANGELOG.md",
+    "LICENSE",
+    "README.md",
+    "THIRD_PARTY_NOTICES.md",
+    "dist/extension.js.LICENSE.txt"
+  ],
+  "keywords": [
+    "foxglove",
+    "webots",
+    "robotics",
+    "simulation"
+  ],
+  "scripts": {
+    "build": "foxglove-extension build",
+    "foxglove:prepublish": "foxglove-extension build --mode production",
+    "lint": "eslint .",
+    "lint:ci": "eslint .",
+    "lint:fix": "eslint --fix .",
+    "local-install": "foxglove-extension install",
+    "package": "foxglove-extension package",
+    "test": "npm run typecheck",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@foxglove/eslint-plugin": "2.1.2",
+    "@foxglove/extension": "2.53.1",
+    "@types/react": "18.3.29",
+    "@types/react-dom": "18.3.7",
+    "create-foxglove-extension": "1.3.2",
+    "css-loader": "7.1.4",
+    "eslint": "9.39.4",
+    "prettier": "3.8.3",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "style-loader": "4.0.0",
+    "typescript": "5.9.3"
+  }
+}

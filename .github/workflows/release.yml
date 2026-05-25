@@ -1,0 +1,136 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    outputs:
+      foxe_name: ${{ steps.package.outputs.foxe_name }}
+      foxe_sha256: ${{ steps.package.outputs.foxe_sha256 }}
+      foxe_url: ${{ steps.package.outputs.foxe_url }}
+      version: ${{ steps.version.outputs.version }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Check tag matches package version
+        id: version
+        run: |
+          VERSION="$(node -p "require('./package.json').version")"
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          if [ "$VERSION" != "$TAG_VERSION" ]; then
+            echo "Tag $GITHUB_REF_NAME does not match package version $VERSION" >&2
+            exit 1
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - run: npm run lint:ci
+
+      - run: npm test
+
+      - run: npm run package
+
+      - name: Locate packaged extension
+        id: package
+        run: |
+          FOXE_NAME="$(node -e "const fs=require('node:fs'); const files=fs.readdirSync('.').filter((file)=>file.endsWith('.foxe')); if (files.length !== 1) { console.error('Expected exactly one .foxe file, found ' + files.length); process.exit(1); } console.log(files[0]);")"
+          FOXE_SHA256="$(sha256sum "$FOXE_NAME" | cut -d ' ' -f 1)"
+          FOXE_URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}/${FOXE_NAME}"
+          echo "foxe_name=$FOXE_NAME" >> "$GITHUB_OUTPUT"
+          echo "foxe_sha256=$FOXE_SHA256" >> "$GITHUB_OUTPUT"
+          echo "foxe_url=$FOXE_URL" >> "$GITHUB_OUTPUT"
+
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" "${{ steps.package.outputs.foxe_name }}" --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" "${{ steps.package.outputs.foxe_name }}" \
+              --title "$GITHUB_REF_NAME" \
+              --notes "Foxglove Webots Extension ${{ steps.version.outputs.version }}"
+          fi
+
+  registry-pr:
+    needs: release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      REGISTRY_PR_TOKEN: ${{ secrets.REGISTRY_PR_TOKEN }}
+
+    steps:
+      - name: Check registry token
+        id: registry_token
+        run: |
+          if [ -n "$REGISTRY_PR_TOKEN" ]; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "REGISTRY_PR_TOKEN is not configured; skipping Foxglove registry PR."
+            echo "available=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@v4
+        if: steps.registry_token.outputs.available == 'true'
+
+      - name: Prepare Foxglove registry PR
+        if: steps.registry_token.outputs.available == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.REGISTRY_PR_TOKEN }}
+          FOXE_URL: ${{ needs.release.outputs.foxe_url }}
+          FOXE_SHA256: ${{ needs.release.outputs.foxe_sha256 }}
+          VERSION: ${{ needs.release.outputs.version }}
+        run: |
+          gh auth setup-git
+          REGISTRY_USER="$(gh api user --jq .login)"
+          if ! gh repo view "$REGISTRY_USER/extension-registry" >/dev/null 2>&1; then
+            gh repo fork foxglove/extension-registry --clone=false
+          fi
+          for _ in 1 2 3 4 5 6 7 8 9 10 11 12; do
+            if gh repo view "$REGISTRY_USER/extension-registry" >/dev/null 2>&1; then
+              break
+            fi
+            sleep 5
+          done
+          gh repo clone "$REGISTRY_USER/extension-registry" registry
+          git -C registry remote remove upstream >/dev/null 2>&1 || true
+          git -C registry remote add upstream https://github.com/foxglove/extension-registry.git
+          git -C registry fetch upstream main
+          BRANCH="add-jkaflik-foxglove-webots-extension-v${VERSION}"
+          git -C registry checkout -B "$BRANCH" upstream/main
+          git -C registry config user.name "github-actions[bot]"
+          git -C registry config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          node scripts/update-extension-registry.js --registry-dir registry --foxe-url "$FOXE_URL" --sha256 "$FOXE_SHA256"
+          if git -C registry diff --quiet; then
+            echo "Foxglove registry is already up to date."
+            exit 0
+          fi
+          git -C registry add extensions.json README.md
+          git -C registry commit -m "Add Foxglove Webots extension v${VERSION}"
+          git -C registry push origin "$BRANCH" --force-with-lease
+          EXISTING_PR="$(gh pr list --repo foxglove/extension-registry --head "$REGISTRY_USER:$BRANCH" --state open --json url --jq '.[0].url // ""')"
+          if [ -n "$EXISTING_PR" ]; then
+            echo "Foxglove registry PR already exists: $EXISTING_PR"
+          else
+            gh pr create \
+              --repo foxglove/extension-registry \
+              --base main \
+              --head "$REGISTRY_USER:$BRANCH" \
+              --title "Add Foxglove Webots extension v${VERSION}" \
+              --body "Adds jkaflik.foxglove-webots-extension v${VERSION}."
+          fi
