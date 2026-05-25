@@ -4,6 +4,12 @@ on:
   push:
     tags:
       - "v*.*.*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to publish, for example v0.1.1
+        required: true
+        type: string
 
 permissions:
   contents: write
@@ -18,9 +24,11 @@ jobs:
       version: ${{ steps.version.outputs.version }}
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.tag || github.ref_name }}
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: 22
           cache: npm
@@ -30,13 +38,15 @@ jobs:
       - name: Check tag matches package version
         id: version
         run: |
+          RELEASE_TAG="${{ inputs.tag || github.ref_name }}"
           VERSION="$(node -p "require('./package.json').version")"
-          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          TAG_VERSION="${RELEASE_TAG#v}"
           if [ "$VERSION" != "$TAG_VERSION" ]; then
-            echo "Tag $GITHUB_REF_NAME does not match package version $VERSION" >&2
+            echo "Tag $RELEASE_TAG does not match package version $VERSION" >&2
             exit 1
           fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=$RELEASE_TAG" >> "$GITHUB_OUTPUT"
 
       - run: npm run lint:ci
 
@@ -49,7 +59,7 @@ jobs:
         run: |
           FOXE_NAME="$(node -e "const fs=require('node:fs'); const files=fs.readdirSync('.').filter((file)=>file.endsWith('.foxe')); if (files.length !== 1) { console.error('Expected exactly one .foxe file, found ' + files.length); process.exit(1); } console.log(files[0]);")"
           FOXE_SHA256="$(sha256sum "$FOXE_NAME" | cut -d ' ' -f 1)"
-          FOXE_URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}/${FOXE_NAME}"
+          FOXE_URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${{ steps.version.outputs.tag }}/${FOXE_NAME}"
           echo "foxe_name=$FOXE_NAME" >> "$GITHUB_OUTPUT"
           echo "foxe_sha256=$FOXE_SHA256" >> "$GITHUB_OUTPUT"
           echo "foxe_url=$FOXE_URL" >> "$GITHUB_OUTPUT"
@@ -58,11 +68,11 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
-            gh release upload "$GITHUB_REF_NAME" "${{ steps.package.outputs.foxe_name }}" --clobber
+          if gh release view "${{ steps.version.outputs.tag }}" >/dev/null 2>&1; then
+            gh release upload "${{ steps.version.outputs.tag }}" "${{ steps.package.outputs.foxe_name }}" --clobber
           else
-            gh release create "$GITHUB_REF_NAME" "${{ steps.package.outputs.foxe_name }}" \
-              --title "$GITHUB_REF_NAME" \
+            gh release create "${{ steps.version.outputs.tag }}" "${{ steps.package.outputs.foxe_name }}" \
+              --title "${{ steps.version.outputs.tag }}" \
               --notes "Foxglove Webots Extension ${{ steps.version.outputs.version }}"
           fi
 
@@ -85,7 +95,7 @@ jobs:
             echo "available=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         if: steps.registry_token.outputs.available == 'true'
 
       - name: Prepare Foxglove registry PR
